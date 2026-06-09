@@ -1,4 +1,5 @@
-name: CI Pipeline (Verify, Build, and Push)
+ 
+name: CI Pipeline (Test, Build, and Push)
 
 on:
   push:
@@ -9,14 +10,13 @@ on:
 
 jobs:
   # ----------------------------------------------------
-  # 1. VERIFY & COMPILE STAGE
+  # 1. TEST STAGE (With Postgres Service)
   # ----------------------------------------------------
-  verify-and-compile:
-    name: Typecheck & Compile TypeScript
+  test:
+    name: Run Unit Tests
     runs-on: ubuntu-latest
 
-    # Keeps the postgres service sidecar in case future steps need it,
-    # though it's primarily used here to validate prisma schemas/migrations.
+    # This spins up a real PostgreSQL instance inside the runner
     services:
       database:
         image: postgres:15-alpine
@@ -26,6 +26,7 @@ jobs:
           POSTGRES_DB: mydatabase
         ports:
           - 5432:5432
+        # Wait until postgres is healthy before starting the steps
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -45,22 +46,28 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Generates the Prisma client using your package.json config
-      - name: Generate Prisma Client
-        run: npx prisma generate
-
-      # Runs your actual compilation script to verify the TS code compiles perfectly
-      - name: Typecheck Application (Build)
+      # Inject your .env variables into the testing environment.
+      # Note: GitHub Actions runners access service containers via 'localhost' 
+      # instead of the service name 'database'.
+      - name: Run Prisma Migrations & Tests
         env:
           DATABASE_URL: "postgresql://myuser:mypass@localhost:5432/mydatabase?schema=public"
-        run: npm run build
+          POSTGRES_USER: "myuser"
+          POSTGRES_PASSWORD: "mypass"
+          POSTGRES_DB: "mydatabase"
+          PORT: "5000"
+          HOST: "0.0.0.0"
+        run: |
+          npm run prisma:generate:dev || npx prisma generate
+          npm run migrate:dev || npx prisma migrate deploy
+          npm test
 
   # ----------------------------------------------------
-  # 2. DOCKER BUILD & PUSH STAGE
+  # 2. BUILD & PUSH STAGE
   # ----------------------------------------------------
   build-and-push:
     name: Build & Push Docker Image
-    needs: verify-and-compile # Ensures this only runs if compilation succeeds
+    needs: test
     runs-on: ubuntu-latest
 
     steps:
