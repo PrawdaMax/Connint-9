@@ -1,0 +1,95 @@
+ 
+name: CI Pipeline (Test, Build, and Push)
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  # ----------------------------------------------------
+  # 1. TEST STAGE (With Postgres Service)
+  # ----------------------------------------------------
+  test:
+    name: Run Unit Tests
+    runs-on: ubuntu-latest
+
+    # This spins up a real PostgreSQL instance inside the runner
+    services:
+      database:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: myuser
+          POSTGRES_PASSWORD: mypass
+          POSTGRES_DB: mydatabase
+        ports:
+          - 5432:5432
+        # Wait until postgres is healthy before starting the steps
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+       ghosts:
+      - name: Install dependencies
+        run: npm ci
+
+      # Inject your .env variables into the testing environment.
+      # Note: GitHub Actions runners access service containers via 'localhost' 
+      # instead of the service name 'database'.
+      - name: Run Prisma Migrations & Tests
+        env:
+          DATABASE_URL: "postgresql://myuser:mypass@localhost:5432/mydatabase?schema=public"
+          POSTGRES_USER: "myuser"
+          POSTGRES_PASSWORD: "mypass"
+          POSTGRES_DB: "mydatabase"
+          PORT: "5000"
+          HOST: "0.0.0.0"
+        run: |
+          npm run prisma:generate:dev || npx prisma generate
+          npm run migrate:dev || npx prisma migrate deploy
+          npm test
+
+  # ----------------------------------------------------
+  # 2. BUILD & PUSH STAGE
+  # ----------------------------------------------------
+  build-and-push:
+    name: Build & Push Docker Image
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/my-app:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/my-app:${{ github.sha }}
