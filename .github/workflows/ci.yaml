@@ -43,7 +43,6 @@ jobs:
           node-version: 20
           cache: 'npm'
 
-       ghosts:
       - name: Install dependencies
         run: npm ci
 
