@@ -9,6 +9,5 @@ describe('CI Pipeline Sanity Check', () => {
     const environment = 'testing';
     expect(environment).toBe('testing');
   });
-  
 
 });
